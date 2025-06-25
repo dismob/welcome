@@ -116,8 +116,8 @@ class Welcome(commands.Cog):
             }
 
             embed = discord.Embed(
-                title=message.format(**data),
-                #description=message.format(**data),
+                title=message.format(**data).replace("\\n", "\n"),
+                #description=message.format(**data).replace("\\n", "\n"),
                 color=color
             )
             #embed.set_thumbnail(url=member.display_avatar.url)
