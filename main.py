@@ -27,7 +27,7 @@ class Welcome(commands.Cog):
         self.bot: commands.Bot = bot
         self.db_path: str = "db/welcome.db"
         self.db_ready: bool = False
-        def template(interaction: discord.Interaction) -> None: pass
+        def template(interaction: discord.Interaction, greeted_member: discord.Member) -> None: pass
         self.on_greeting: Event = Event(template)
         self.bot.loop.create_task(self.init_db())
         self._active_join_messages = {}  # {guild_id: {member_id: (message, delete_task)}}
@@ -196,7 +196,7 @@ class Welcome(commands.Cog):
                 await interaction.response.edit_message(view=self.view)
 
                 # Dispatch the greeting event so that other modules can do some actions (eg. give xp)
-                self.parent.on_greeting.dispatch(interaction)
+                self.parent.on_greeting.dispatch(interaction, member)
 
         view = discord.ui.View()
         view.add_item(WelcomeButton(self))
