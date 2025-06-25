@@ -4,6 +4,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import functools
 from typing import Optional
 import discord
 from discord.ext import commands
@@ -63,9 +64,37 @@ class Welcome(commands.Cog):
                     FOREIGN KEY (guild_id) REFERENCES welcome_config(guild_id) ON DELETE CASCADE
                 )
             """)
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS welcome_greet_counts (
+                    guild_id INTEGER,
+                    greeter_id INTEGER,
+                    count INTEGER DEFAULT 0,
+                    PRIMARY KEY (guild_id, greeter_id)
+                )
+            """)
             await db.commit()
             self.db_ready = True
             log.info("Welcome database initialized")
+
+    async def increment_greet_count(self, guild_id: int, greeter_id: int):
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("""
+                INSERT INTO welcome_greet_counts (guild_id, greeter_id, count)
+                VALUES (?, ?, 1)
+                ON CONFLICT(guild_id, greeter_id)
+                DO UPDATE SET count = count + 1
+            """, (guild_id, greeter_id))
+            await db.commit()
+
+    async def get_greet_count(self, guild_id: int, greeter_id: int) -> int:
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("""
+                SELECT count FROM welcome_greet_counts
+                WHERE guild_id = ? AND greeter_id = ?
+            """, (guild_id, greeter_id)) as cursor:
+                row = await cursor.fetchone()
+                return row[0] if row else 0
 
     async def send_formatted_message(self, channel: discord.TextChannel, title: str, message: str, member: discord.Member, color: discord.Color, view = None, delete_after: Optional[int] = None) -> Optional[discord.Message]:
         """Send a formatted embed message to the specified channel.
@@ -109,7 +138,8 @@ class Welcome(commands.Cog):
             return None, None
 
     def db_ready_only(func):
-        async def wrapper(self, ctx, *args, **kwargs):
+        @functools.wraps(func)
+        async def wrapper(self, ctx: discord.Interaction, *args, **kwargs):
             if not self.db_ready:
                 await log.client(ctx, "Database is not ready yet. Please try again in a few seconds.")
                 return
@@ -187,6 +217,8 @@ class Welcome(commands.Cog):
                 if interaction.user.id in self.greeters:
                     await log.client(interaction, "You have already welcomed this member!")
                     return
+
+                await self.parent.increment_greet_count(interaction.guild.id, interaction.user.id)
 
                 # Record the greeting
                 self.greeters.append(interaction.user.id)
@@ -274,15 +306,27 @@ class Welcome(commands.Cog):
     #           commands            #
     #####                       ##### 
 
+    @discord.app_commands.command(name="welcome-count", description="Check how many people you have welcomed")
+    @db_ready_only
+    async def greet_count(self, interaction: discord.Interaction, member: Optional[discord.Member] = None) -> None:
+        target = member or (interaction.user if hasattr(interaction, "user") else interaction.author)
+        member_str: str = "You have" if interaction.user.id == target.id else f"{target.mention} has"
+
+        count = await self.get_greet_count(interaction.guild.id, target.id)
+        if count is None or count <= 0:
+            await log.client(interaction, f"{member_str} not welcomed anyone in this server.")
+        else:
+            await log.client(interaction, f"{member_str} welcomed {count} member{'s' if count > 1 else ''} in this server.")
+
     # Create a slash command group for managing welcome settings
     welcomeGroup = discord.app_commands.Group(name="welcome", description="Manage welcome messages settings", default_permissions=discord.Permissions(manage_guild=True))
 
     # Create a slash command group for managing join messages settings
     joinGroup = discord.app_commands.Group(name="join", description="Manage join messages settings", parent=welcomeGroup)
 
-    @db_ready_only
     @joinGroup.command(name="settings", description="Set the config for join messages")
-    async def set_join_config(self, ctx: discord.Integration, channel: Optional[discord.TextChannel] = None, title: Optional[str] = None, enable: Optional[bool] = None, duration: Optional[int] = None) -> None:
+    @db_ready_only
+    async def set_join_config(self, ctx: discord.Interaction, channel: Optional[discord.TextChannel] = None, title: Optional[str] = None, enable: Optional[bool] = None, duration: Optional[int] = None) -> None:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 async with db.execute("""
@@ -321,9 +365,9 @@ class Welcome(commands.Cog):
         except Exception as e:
             await log.failure(ctx, f"An error occurred while updating the database. Please try again later.\n```\n{e}\n```")
 
-    @db_ready_only
     @joinGroup.command(name="add-message", description="Add a new join message")
-    async def add_join_message(self, ctx: discord.Integration, message: str) -> None:
+    @db_ready_only
+    async def add_join_message(self, ctx: discord.Interaction, message: str) -> None:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 await db.execute("""
@@ -335,9 +379,9 @@ class Welcome(commands.Cog):
         except Exception as e:
             await log.failure(ctx, f"An error occurred while adding the join message. Please try again later.\n```\n{e}\n```")
 
-    @db_ready_only
     @joinGroup.command(name="remove-message", description="Remove a join message by ID")
-    async def remove_join_message(self, ctx: discord.Integration, message_id: int) -> None:
+    @db_ready_only
+    async def remove_join_message(self, ctx: discord.Interaction, message_id: int) -> None:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 result = await db.execute("""
@@ -352,9 +396,9 @@ class Welcome(commands.Cog):
         except Exception as e:
             await log.failure(ctx, f"An error occurred while removing the join message. Please try again later.\n```\n{e}\n```")
 
-    @db_ready_only
     @joinGroup.command(name="list-message", description="List all join messages")
-    async def list_join_messages(self, ctx: discord.Integration) -> None:
+    @db_ready_only
+    async def list_join_messages(self, ctx: discord.Interaction) -> None:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 async with db.execute("""
@@ -372,9 +416,9 @@ class Welcome(commands.Cog):
         except Exception as e:
             await log.failure(ctx, f"An error occurred while listing join messages. Please try again later.\n```\n{e}\n```")
 
-    @db_ready_only
     @joinGroup.command(name="test", description="Test the join message for yourself or another member")
-    async def test_join_message(self, ctx: discord.Integration, member: Optional[discord.Member] = None) -> None:
+    @db_ready_only
+    async def test_join_message(self, ctx: discord.Interaction, member: Optional[discord.Member] = None) -> None:
         target_member = member or (ctx.user if hasattr(ctx, "user") else ctx.author)
         await self.on_member_join(target_member)
         await log.client(ctx, f"Testing join message for member {target_member.mention}.")
@@ -382,9 +426,9 @@ class Welcome(commands.Cog):
     # Create a slash command group for managing leave messages settings
     leaveGroup = discord.app_commands.Group(name="leave", description="Manage leave messages settings", parent=welcomeGroup)
 
-    @db_ready_only
     @leaveGroup.command(name="settings", description="Set the config for leave messages")
-    async def set_leave_config(self, ctx: discord.Integration, channel: Optional[discord.TextChannel] = None, title: Optional[str] = None, enable: Optional[bool] = None, duration: Optional[int] = None) -> None:
+    @db_ready_only
+    async def set_leave_config(self, ctx: discord.Interaction, channel: Optional[discord.TextChannel] = None, title: Optional[str] = None, enable: Optional[bool] = None, duration: Optional[int] = None) -> None:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 async with db.execute("""
@@ -425,9 +469,9 @@ class Welcome(commands.Cog):
         except Exception as e:
             await log.failure(ctx, f"An error occurred while updating the database. Please try again later.\n```\n{e}\n```")
 
-    @db_ready_only
     @leaveGroup.command(name="add-message", description="Add a new leave message")
-    async def add_leave_message(self, ctx: discord.Integration, message: str) -> None:
+    @db_ready_only
+    async def add_leave_message(self, ctx: discord.Interaction, message: str) -> None:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 await db.execute("""
@@ -439,9 +483,9 @@ class Welcome(commands.Cog):
         except Exception as e:
             await log.failure(ctx, f"An error occurred while adding the leave message. Please try again later.\n```\n{e}\n```")
 
-    @db_ready_only
     @leaveGroup.command(name="remove-message", description="Remove a leave message by ID")
-    async def remove_leave_message(self, ctx: discord.Integration, message_id: int) -> None:
+    @db_ready_only
+    async def remove_leave_message(self, ctx: discord.Interaction, message_id: int) -> None:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 result = await db.execute("""
@@ -456,9 +500,9 @@ class Welcome(commands.Cog):
         except Exception as e:
             await log.failure(ctx, f"An error occurred while removing the leave message. Please try again later.\n```\n{e}\n```")
 
-    @db_ready_only
     @leaveGroup.command(name="list-message", description="List all leave messages")
-    async def list_leave_messages(self, ctx: discord.Integration) -> None:
+    @db_ready_only
+    async def list_leave_messages(self, ctx: discord.Interaction) -> None:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 async with db.execute("""
@@ -476,9 +520,9 @@ class Welcome(commands.Cog):
         except Exception as e:
             await log.failure(ctx, f"An error occurred while listing leave messages. Please try again later.\n```\n{e}\n```")
 
-    @db_ready_only
     @leaveGroup.command(name="test", description="Test the leave message for yourself or another member")
-    async def test_leave_message(self, ctx: discord.Integration, member: Optional[discord.Member] = None) -> None:
+    @db_ready_only
+    async def test_leave_message(self, ctx: discord.Interaction, member: Optional[discord.Member] = None) -> None:
         target_member = member or (ctx.user if hasattr(ctx, "user") else ctx.author)
         await self.on_member_remove(target_member)
         await log.client(ctx, f"Testing leave message for member {target_member.mention}.")
