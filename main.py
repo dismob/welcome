@@ -199,39 +199,8 @@ class Welcome(commands.Cog):
 
         message = random.choice(messages)
 
-        class WelcomeButton(discord.ui.Button):
-            def __init__(self, parent: Welcome):
-                super().__init__(
-                    label="👋 Welcome",
-                    style=discord.ButtonStyle.secondary
-                )
-                self.parent = parent
-                self.greeters: list[int] = []
-
-            async def callback(self, interaction: discord.Interaction):
-                if interaction.user.id == member.id:
-                    await log.client(interaction, "You cannot welcome yourself!")
-                    return
-
-                # Check if already greeted
-                if interaction.user.id in self.greeters:
-                    await log.client(interaction, "You have already welcomed this member!")
-                    return
-
-                await self.parent.increment_greet_count(interaction.guild.id, interaction.user.id)
-
-                # Record the greeting
-                self.greeters.append(interaction.user.id)
-                
-                # Update the button label
-                self.label = f"👋 Welcomed ({len(self.greeters)})"
-                await interaction.response.edit_message(view=self.view)
-
-                # Dispatch the greeting event so that other modules can do some actions (eg. give xp)
-                self.parent.on_greeting.dispatch(interaction, member)
-
-        view = discord.ui.View()
-        view.add_item(WelcomeButton(self))
+        view = discord.ui.View(timeout=None)
+        view.add_item(WelcomeButton(self, member))
         sent_msg, delete_task = await self.send_formatted_message(channel, title, message, member, discord.Color.green(), view=view, delete_after=join_duration)
         # Track the join message for possible early deletion
         if sent_msg and join_duration and join_duration > 0:
@@ -526,3 +495,35 @@ class Welcome(commands.Cog):
         target_member = member or (ctx.user if hasattr(ctx, "user") else ctx.author)
         await self.on_member_remove(target_member)
         await log.client(ctx, f"Testing leave message for member {target_member.mention}.")
+
+class WelcomeButton(discord.ui.Button):
+    def __init__(self, parent: Welcome, member: discord.Member):
+        super().__init__(
+            label="👋 Welcome",
+            style=discord.ButtonStyle.secondary
+        )
+        self.parent = parent
+        self.member = member
+        self.greeters: list[int] = []
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id == self.member.id:
+            await log.client(interaction, "You cannot welcome yourself!")
+            return
+
+        # Check if already greeted
+        if interaction.user.id in self.greeters:
+            await log.client(interaction, "You have already welcomed this member!")
+            return
+
+        await self.parent.increment_greet_count(interaction.guild.id, interaction.user.id)
+
+        # Record the greeting
+        self.greeters.append(interaction.user.id)
+        
+        # Update the button label
+        self.label = f"👋 Welcomed ({len(self.greeters)})"
+        await interaction.response.edit_message(view=self.view)
+
+        # Dispatch the greeting event so that other modules can do some actions (eg. give xp)
+        self.parent.on_greeting.dispatch(interaction, self.member)
