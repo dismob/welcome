@@ -115,9 +115,10 @@ class Welcome(commands.Cog):
                 "mention": member.mention
             }
 
+            msg = message.format(**data).replace('\\n', '\n')
             embed = discord.Embed(
-                #title=message.format(**data).replace("\\n", "\n"),
-                description=f"## {message.format(**data).replace('\\n', '\n')}",
+                #title=msg,
+                description=f"## {msg}",
                 color=color
             )
             #embed.set_thumbnail(url=member.display_avatar.url)
