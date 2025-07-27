@@ -499,8 +499,8 @@ class Welcome(commands.Cog):
 class WelcomeButton(discord.ui.Button):
     def __init__(self, parent: Welcome, member: discord.Member):
         super().__init__(
-            label="👋 Welcome",
-            style=discord.ButtonStyle.secondary
+            label="👋 Welcome!",
+            style=discord.ButtonStyle.success
         )
         self.parent = parent
         self.member = member
@@ -522,7 +522,7 @@ class WelcomeButton(discord.ui.Button):
         self.greeters.append(interaction.user.id)
         
         # Update the button label
-        self.label = f"👋 Welcomed ({len(self.greeters)})"
+        self.label = f"👋 Welcome! ({len(self.greeters)} people welcomed you!)"
         await interaction.response.edit_message(view=self.view)
 
         # Dispatch the greeting event so that other modules can do some actions (eg. give xp)
